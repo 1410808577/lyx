@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Baccarat Pro AI</title>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: #151b2b;
+            --player-color: #00e5ff;
+            --banker-color: #ff4081;
+            --tie-color: #4caf50;
+            --text-main: #ffffff;
+            --text-muted: #64748b;
+            --border-color: #2a3441;
+        }
+        
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; user-select: none; -webkit-tap-highlight-color: transparent; }
+        body { margin: 0; padding: 12px; background: var(--bg-color); color: var(--text-main); }
+        
+        /* 顶部状态栏 */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .logo { font-size: 1.2rem; font-weight: bold; background: linear-gradient(90deg, var(--player-color), var(--banker-color)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .deck-info { font-size: 0.8rem; color: var(--text-muted); background: var(--panel-bg); padding: 4px 10px; border-radius: 12px; border: 1px solid var(--border-color); }
+
+        /* 核心数据仪表盘 */
+        .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .dash-box { background: var(--panel-bg); border-radius: 12px; padding: 15px; text-align: center; border: 1px solid var(--border-color); }
+        .dash-title { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .dash-value { font-size: 2rem; font-weight: bold; }
+        #rc-val { color: var(--player-color); }
+        #tc-val { color: var(--banker-color); }
+
+        /* AI 建议横幅 */
+        .ai-banner { background: var(--panel-bg); border-radius: 10px; padding: 12px; text-align: center; margin-bottom: 15px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 5px; }
+        .ai-status { font-size: 1.1rem; font-weight: bold; }
+        .ai-bet { font-size: 0.9rem; color: #ffeb3b; }
+
+        /* 烧牌遮罩层 */
+        #init-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(11, 15, 25, 0.95); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
+        .init-box { background: var(--panel-bg); width: 100%; max-width: 400px; padding: 25px; border-radius: 16px; border: 1px solid var(--player-color); text-align: center; box-shadow: 0 0 20px rgba(0, 229, 255, 0.1); }
+        
+        /* 庄闲输入区 */
+        .play-area { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .side-box { background: var(--panel-bg); border: 2px solid var(--border-color); border-radius: 12px; padding: 10px; min-height: 110px; display: flex; flex-direction: column; transition: 0.2s; }
+        .side-box.active-player { border-color: var(--player-color); box-shadow: 0 0 10px rgba(0, 229, 255, 0.2); }
+        .side-box.active-banker { border-color: var(--banker-color); box-shadow: 0 0 10px rgba(255, 64, 129, 0.2); }
+        .side-title { font-size: 0.85rem; font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; }
+        .t-player { color: var(--player-color); }
+        .t-banker { color: var(--banker-color); }
+        .card-slot-container { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; flex: 1; align-items: center; }
+
+        /* 扑克牌 UI */
+        .p-card { width: 38px; height: 55px; background: #fff; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #000; font-weight: bold; font-size: 1.2rem; box-shadow: 0 2px 5px rgba(0,0,0,0.5); animation: popIn 0.2s ease-out; position: relative; }
+        .p-card.red { color: #d32f2f; }
+        .p-card.black { color: #111; }
+        .p-card .suit { font-size: 0.7rem; position: absolute; top: 2px; left: 3px; }
+        @keyframes popIn { 0% { transform: scale(0.5); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+        /* 键盘区 */
+        .submit-btn { width: 100%; background: #2c3e50; color: white; border: none; padding: 15px; border-radius: 10px; font-size: 1.1rem; font-weight: bold; margin-bottom: 15px; cursor: pointer; transition: 0.2s; }
+        .submit-btn.ready { background: linear-gradient(90deg, #3b82f6, #8b5cf6); box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4); }
+        .submit-btn:active { transform: scale(0.98); }
+
+        .keypad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+        .key { background: #1e293b; border: 1px solid var(--border-color); color: white; border-radius: 8px; height: 60px; font-size: 1.5rem; font-weight: bold; cursor: pointer; transition: 0.1s; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; }
+        .key:active { background: #334155; transform: scale(0.95); }
+        .key-val { font-size: 0.65rem; color: var(--text-muted); position: absolute; bottom: 3px; }
+        
+        .action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+        .btn-del { background: #3f1d25; color: #ff8a80; border: 1px solid #5c2936; }
+        .btn-clear { background: #1e3a40; color: #80cbc4; border: 1px solid #2a525a; }
+
+        /* 历史记录圆点 */
+        .history-track { display: flex; gap: 4px; overflow-x: auto; padding: 10px 0; margin-top: 10px; border-top: 1px solid var(--border-color); }
+        .h-dot { min-width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: bold; color: #fff; }
+        .h-p { background: var(--player-color); color: #000; }
+        .h-b { background: var(--banker-color); }
+        .h-t { background: var(--tie-color); }
+
+        .hidden { display: none !important; }
+        .btn-undo-round { background: #2d1f4a; color: #ce93d8; border: 1px solid #4a2d6e; margin-top: 8px; height: 45px; font-size: 0.9rem; width: 100%; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.1s; display: flex; align-items: center; justify-content: center; gap: 6px; }
+        .btn-undo-round:active { transform: scale(0.98); }
+        .btn-undo-round.hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <div id="init-overlay">
+        <div class="init-box">
+            <h2 style="color: var(--player-color); margin-top:0;">初始化新靴</h2>
+            <p style="color: var(--text-muted); font-size:0.9rem; margin-bottom: 20px;">请输入荷官抽出的第一张【烧牌】<br>系统将自动计算销毁数量</p>
+            <div class="keypad" style="grid-template-columns: repeat(5, 1fr); gap: 5px; margin-bottom: 20px;">
+                <button class="key" onclick="burnCard('A', 1)">A</button>
+                <button class="key" onclick="burnCard('2', 2)">2</button>
+                <button class="key" onclick="burnCard('3', 3)">3</button>
+                <button class="key" onclick="burnCard('4', 4)">4</button>
+                <button class="key" onclick="burnCard('5', 5)">5</button>
+                <button class="key" onclick="burnCard('6', 6)">6</button>
+                <button class="key" onclick="burnCard('7', 7)">7</button>
+                <button class="key" onclick="burnCard('8', 8)">8</button>
+                <button class="key" onclick="burnCard('9', 9)">9</button>
+                <button class="key" onclick="burnCard('10', 10)">10</button>
+                <button class="key" onclick="burnCard('J', 10)" style="grid-column: span 2;">J/Q/K</button>
+            </div>
+            <div style="text-align: left; margin-top: 20px;">
+                <label style="color:#aaa; font-size:0.8rem;">设置本金 (￥):</label>
+                <input type="number" id="baseBankroll" value="10000" style="width:100%; padding:10px; margin-top:5px; background:#0b0f19; border:1px solid #333; color:white; border-radius:6px;">
+            </div>
+        </div>
+    </div>
+
+    <div class="header">
+        <div class="logo">BACCARAT PRO ⚡</div>
+        <div class="deck-info">剩 <span id="cards-left">416</span> 张 | 局数 <span id="round-count">0</span></div>
+    </div>
+
+    <div class="dashboard">
+        <div class="dash-box">
+            <div class="dash-title">Running Count</div>
+            <div class="dash-value" id="rc-val">0</div>
+        </div>
+        <div class="dash-box">
+            <div class="dash-title">True Count</div>
+            <div class="dash-value" id="tc-val">0.0</div>
+        </div>
+    </div>
+
+    <div class="ai-banner" id="ai-banner">
+        <div class="ai-status" id="ai-status" style="color: var(--text-muted);">数据采集中，暂不建议下注</div>
+        <div class="ai-bet" id="ai-bet">建议下注: ￥0 (基准1%)</div>
+    </div>
+
+    <div class="play-area">
+        <div class="side-box active-player" id="box-player" onclick="setActive('player')">
+            <div class="side-title t-player"><span>闲家 PLAYER</span><span id="pts-player">0点</span></div>
+            <div class="card-slot-container" id="cards-player"></div>
+        </div>
+        <div class="side-box" id="box-banker" onclick="setActive('banker')">
+            <div class="side-title t-banker"><span>庄家 BANKER</span><span id="pts-banker">0点</span></div>
+            <div class="card-slot-container" id="cards-banker"></div>
+        </div>
+    </div>
+
+    <button class="submit-btn" id="submit-btn" onclick="submitRound()">输入双方牌面后计算胜负</button>
+
+    <div class="keypad">
+        <button class="key" onclick="addCard('A', 1, 1)">A<span class="key-val">+1</span></button>
+        <button class="key" onclick="addCard('2', 2, 1)">2<span class="key-val">+1</span></button>
+        <button class="key" onclick="addCard('3', 3, 1)">3<span class="key-val">+1</span></button>
+        <button class="key" onclick="addCard('4', 4, 2)">4<span class="key-val">+2</span></button>
+        <button class="key" onclick="addCard('5', 5, -1)">5<span class="key-val">-1</span></button>
+        <button class="key" onclick="addCard('6', 6, -2)">6<span class="key-val">-2</span></button>
+        <button class="key" onclick="addCard('7', 7, -1)">7<span class="key-val">-1</span></button>
+        <button class="key" onclick="addCard('8', 8, -1)">8<span class="key-val">-1</span></button>
+        <button class="key" onclick="addCard('9', 9, 0)">9<span class="key-val">0</span></button>
+        <button class="key" onclick="addCard('10', 0, 0)">10<span class="key-val">0</span></button>
+        <button class="key" onclick="addCard('J', 0, 0)">J<span class="key-val">0</span></button>
+        <button class="key" onclick="addCard('Q', 0, 0)">Q<span class="key-val">0</span></button>
+        <button class="key" onclick="addCard('K', 0, 0)" style="grid-column: span 2;">K<span class="key-val">0</span></button>
+    </div>
+
+    <div class="action-row">
+        <button class="key btn-clear" onclick="clearHand()" style="height: 45px; font-size: 1rem;">清空本局</button>
+        <button class="key btn-del" onclick="undoCard()" style="height: 45px; font-size: 1rem;">退格 ⏪</button>
+    </div>
+    <button class="btn-undo-round hidden" id="undo-round-btn" onclick="undoRound()">↩️ 撤回上局重新输入</button>
+
+    <div class="history-track" id="history-track"></div>
+
+    <script>
+        // ══════════════════════════════════════════════════════════
+        //  BACCARAT PRO AI — 全智能决策引擎 v3.1
+        //  Fix: 连败保护自动解除 | 本金精确记账 | 撤回上局功能
+        // ══════════════════════════════════════════════════════════
+
+        // ── 核心数据 ──
+        let totalCards   = 8 * 52;
+        let dealtCards   = 0;
+        let runningCount = 0;
+        let history      = [];
+        let rounds       = 0;
+
+        // ── 牌型计数器（T = 10/J/Q/K）──
+        let cardCount = { A:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0,T:0 };
+
+        // ── 复利管理（本金不强制取整，精确记账）──
+        let effectiveBankroll = 0;
+        let lastBetAmount     = 0;
+        let lastTcAbove25     = false;
+        let lastAISide        = null;   // 上一局 AI 推荐方向
+
+        // ── 连败保护 ──
+        let consecutiveLoss = 0;
+        let sessionPnL      = 0;
+
+        // ── 路单追踪 ──
+        let roadState = { mode:'normal', side:null, length:0, brokenCount:0 };
+
+        // ── 撤回快照（最多支持撤回1局）──
+        let lastSnapshot = null;
+
+        // ── 当前局 ──
+        let activeSide  = 'player';
+        let currentHand = { player:[], banker:[] };
+        const suits = ['♠','♥','♣','♦'];
+
+        // ══════════════════════════════════════════════════════════
+        //  工具：注额取最近百位整数（最低 100）
+        // ══════════════════════════════════════════════════════════
+        function roundTo100(n) {
+            return Math.max(100, Math.round(n / 100) * 100);
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  牌靴深度分析
+        // ══════════════════════════════════════════════════════════
+        function shoePenetration() { return dealtCards / totalCards; }
+
+        function naturalProbability() {
+            let rem = totalCards - dealtCards;
+            if (rem <= 0) return 0.25;
+            return (Math.max(0, 64 - (cardCount[8]||0)) + Math.max(0, 64 - (cardCount[9]||0))) / rem;
+        }
+        function tenRatio() {
+            let rem = totalCards - dealtCards;
+            return rem <= 0 ? 0.31 : Math.max(0, 256 - (cardCount['T']||0)) / rem;
+        }
+        function lowCardRatio() {
+            let rem = totalCards - dealtCards;
+            if (rem <= 0) return 0.38;
+            let used = [1,2,3,4,5].reduce((s,k)=>s+(cardCount[k]||0), 0);
+            return Math.max(0, 320 - used) / rem;
+        }
+        function bankerEdgeBonus() {
+            return (tenRatio()-0.31)*0.5 + (lowCardRatio()-0.38)*0.3 - (naturalProbability()-0.25)*0.2;
+        }
+        function shoePhase() {
+            let p = shoePenetration();
+            return p < 0.2 ? 'early' : p < 0.6 ? 'mid' : 'late';
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  路单分析
+        // ══════════════════════════════════════════════════════════
+        function detectBigRoad(hist) {
+            let nt = hist.filter(r=>r!=='t');
+            if (nt.length < 2) return { type:'none', length:0, side:null };
+            let streak=1, side=nt[nt.length-1];
+            for (let i=nt.length-2; i>=0; i--) { if(nt[i]===side) streak++; else break; }
+            if (streak >= 5) return { type:'dragon', length:streak, side };
+            let alt=1;
+            for (let i=nt.length-2; i>=0; i--) { if(nt[i]!==nt[i+1]) alt++; else break; }
+            if (alt >= 5) return { type:'chop', length:alt, side };
+            return { type:'none', length:0, side:null };
+        }
+
+        function lowerRoadScore(hist) {
+            let nt = hist.filter(r=>r!=='t');
+            if (nt.length < 8) return { score:0, conf:0 };
+            let be=0, sm=0, ro=0, win=Math.min(nt.length,10);
+            for (let i=nt.length-1; i>=nt.length-win; i--) {
+                if(i>=2) be += (nt[i]===nt[i-2]) ? (nt[i]==='b'?0.6:-0.6) : (nt[i]==='b'?-0.3:0.3);
+                if(i>=3) sm += (nt[i]===nt[i-3]) ? (nt[i]==='b'?0.5:-0.5) : (nt[i]==='b'?-0.25:0.25);
+                if(i>=4) ro += (nt[i]===nt[i-4]) ? (nt[i]==='b'?0.4:-0.4) : (nt[i]==='b'?-0.2:0.2);
+            }
+            be/=win; sm/=win; ro/=win;
+            return { score:Math.max(-1,Math.min(1,be*0.45+sm*0.35+ro*0.20)), conf:Math.min(1,nt.length/20) };
+        }
+
+        function recentTrend(n) {
+            let nt = history.filter(r=>r!=='t').slice(-(n||8));
+            if (nt.length < 3) return { side:null, strength:0 };
+            let ratio = nt.filter(r=>r==='b').length / nt.length;
+            if (ratio > 0.625) return { side:'banker', strength:(ratio-0.5)*2 };
+            if (ratio < 0.375) return { side:'player', strength:(0.5-ratio)*2 };
+            return { side:null, strength:0 };
+        }
+
+        function updateRoadState(hist) {
+            let br   = detectBigRoad(hist);
+            let nt   = hist.filter(r=>r!=='t');
+            let last = nt.length > 0 ? nt[nt.length-1] : null;
+            if (roadState.mode==='follow_dragon') {
+                if (last && last!==roadState.side) { roadState.mode='dragon_broken'; roadState.brokenCount=1; }
+                else roadState.length=br.length;
+            } else if (roadState.mode==='follow_chop') {
+                if (nt.length>=2 && nt[nt.length-1]===nt[nt.length-2]) { roadState.mode='dragon_broken'; roadState.brokenCount=1; }
+                else { roadState.side=last; roadState.length=br.length; }
+            } else if (roadState.mode==='dragon_broken') {
+                roadState.brokenCount++;
+                if (roadState.brokenCount>=3) roadState={ mode:'normal', side:null, length:0, brokenCount:0 };
+            } else {
+                if (br.type==='dragon'&&br.length>=5) { roadState.mode='follow_dragon'; roadState.side=br.side; roadState.length=br.length; }
+                else if (br.type==='chop'&&br.length>=5) { roadState.mode='follow_chop'; roadState.side=br.side; roadState.length=br.length; }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  快照管理（撤回上局）
+        // ══════════════════════════════════════════════════════════
+        function saveSnapshot(savedHand) {
+            lastSnapshot = {
+                history:       [...history],
+                rounds,
+                cardCount:     Object.assign({}, cardCount),
+                runningCount,
+                dealtCards,
+                effectiveBankroll,
+                sessionPnL,
+                consecutiveLoss,
+                roadState:     Object.assign({}, roadState),
+                lastBetAmount,
+                lastAISide,
+                lastTcAbove25,
+                savedHand      // { player:[...], banker:[...] }
+            };
+            document.getElementById('undo-round-btn').classList.remove('hidden');
+        }
+
+        function undoRound() {
+            if (!lastSnapshot) return;
+            let snap = lastSnapshot;
+            history         = snap.history;
+            rounds          = snap.rounds;
+            cardCount       = snap.cardCount;
+            runningCount    = snap.runningCount;
+            dealtCards      = snap.dealtCards;
+            effectiveBankroll = snap.effectiveBankroll;
+            sessionPnL      = snap.sessionPnL;
+            consecutiveLoss = snap.consecutiveLoss;
+            roadState       = snap.roadState;
+            lastBetAmount   = snap.lastBetAmount;
+            lastAISide      = snap.lastAISide;
+            lastTcAbove25   = snap.lastTcAbove25;
+            // 恢复牌面
+            currentHand = { player:[...snap.savedHand.player], banker:[...snap.savedHand.banker] };
+            lastSnapshot = null;
+            document.getElementById('undo-round-btn').classList.add('hidden');
+            renderCards();
+            updateDashboard();
+            renderHistory();
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  1. 初始化烧牌
+        // ══════════════════════════════════════════════════════════
+        function burnCard(label, b_count) {
+            let key = (label==='10'||label==='J'||label==='Q'||label==='K') ? 'T' : label;
+            for (let i=0; i<b_count+1; i++) cardCount[key] = (cardCount[key]||0)+1;
+            dealtCards += b_count + 1;
+            document.getElementById('init-overlay').classList.add('hidden');
+            updateDashboard();
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  2. 切换活动框
+        // ══════════════════════════════════════════════════════════
+        function setActive(side) {
+            activeSide = side;
+            document.getElementById('box-player').classList.remove('active-player');
+            document.getElementById('box-banker').classList.remove('active-banker');
+            if (side==='player') document.getElementById('box-player').classList.add('active-player');
+            if (side==='banker') document.getElementById('box-banker').classList.add('active-banker');
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  3. 添加牌
+        // ══════════════════════════════════════════════════════════
+        function addCard(label, baccPt, countVal) {
+            if (currentHand[activeSide].length >= 3) setActive(activeSide==='player'?'banker':'player');
+            if (currentHand[activeSide].length < 3) {
+                let suit  = suits[Math.floor(Math.random()*suits.length)];
+                let color = (suit==='♥'||suit==='♦') ? 'red' : 'black';
+                currentHand[activeSide].push({ label, pt:baccPt, cv:countVal, suit, color });
+                if (activeSide==='player'&&currentHand.player.length===2&&currentHand.banker.length===0) setActive('banker');
+                renderCards();
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  4. 退格与清空（当前局）
+        // ══════════════════════════════════════════════════════════
+        function undoCard() {
+            if (currentHand[activeSide].length > 0) currentHand[activeSide].pop();
+            else { setActive(activeSide==='player'?'banker':'player'); currentHand[activeSide].pop(); }
+            renderCards();
+        }
+        function clearHand() {
+            currentHand = { player:[], banker:[] };
+            setActive('player');
+            renderCards();
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  5. 渲染牌面
+        // ══════════════════════════════════════════════════════════
+        function renderCards() {
+            ['player','banker'].forEach(side => {
+                let container = document.getElementById('cards-'+side);
+                container.innerHTML = '';
+                let totalPts = 0;
+                currentHand[side].forEach(c => {
+                    totalPts += c.pt;
+                    let d = document.createElement('div');
+                    d.className = 'p-card '+c.color;
+                    d.innerHTML = '<span class="suit">'+c.suit+'</span>'+c.label;
+                    container.appendChild(d);
+                });
+                document.getElementById('pts-'+side).innerText = (totalPts%10)+'点';
+            });
+            let btn = document.getElementById('submit-btn');
+            if (currentHand.player.length>=2 && currentHand.banker.length>=2) {
+                btn.classList.add('ready'); btn.innerText = '锁定本局并结算 🚀';
+            } else {
+                btn.classList.remove('ready'); btn.innerText = '输入双方牌面后计算胜负';
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  6. 提交回合 + 复利结算（精确记账，佣金按规则扣）
+        // ══════════════════════════════════════════════════════════
+        function submitRound() {
+            if (currentHand.player.length<2 || currentHand.banker.length<2) return;
+
+            let pPts = currentHand.player.reduce((s,c)=>s+c.pt,0)%10;
+            let bPts = currentHand.banker.reduce((s,c)=>s+c.pt,0)%10;
+            let resultStr = pPts>bPts?'p':(bPts>pPts?'b':'t');
+
+            // ── 保存快照（可撤回）──
+            saveSnapshot({
+                player: currentHand.player.map(c=>Object.assign({},c)),
+                banker: currentHand.banker.map(c=>Object.assign({},c))
+            });
+
+            history.push(resultStr);
+            rounds++;
+
+            // 更新牌型计数
+            [...currentHand.player,...currentHand.banker].forEach(c => {
+                let key=(c.label==='10'||c.label==='J'||c.label==='Q'||c.label==='K')?'T':c.label;
+                cardCount[key]=(cardCount[key]||0)+1;
+            });
+
+            // ── 复利盈亏结算（精确，不取整本金）──
+            let inCompound = lastTcAbove25 || roadState.mode==='follow_dragon' || roadState.mode==='follow_chop';
+            if (lastBetAmount > 0 && lastAISide && resultStr !== 't') {
+                let won = (resultStr==='p'&&lastAISide==='player')||(resultStr==='b'&&lastAISide==='banker');
+                if (won) {
+                    consecutiveLoss = 0;
+                    // 庄赢：净利润 = 注额×0.95（扣5%佣金）；闲赢：净利润 = 注额×1
+                    let profit = lastAISide==='banker'
+                        ? Math.floor(lastBetAmount * 0.95)
+                        : lastBetAmount;
+                    if (inCompound) {
+                        effectiveBankroll += profit;
+                        sessionPnL        += profit;
+                    }
+                } else {
+                    consecutiveLoss++;
+                    if (inCompound) {
+                        effectiveBankroll = Math.max(0, effectiveBankroll - lastBetAmount);
+                        sessionPnL        -= lastBetAmount;
+                    }
+                }
+            }
+
+            // 更新算牌
+            currentHand.player.forEach(c=>{ runningCount+=c.cv; dealtCards++; });
+            currentHand.banker.forEach(c=>{ runningCount+=c.cv; dealtCards++; });
+
+            clearHand();
+            updateDashboard();
+            renderHistory();
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  7. 核心 AI 决策引擎（五维分析）
+        //  Fix: 连败保护模式下仍设置 lastAISide，确保胜利后自动解除
+        // ══════════════════════════════════════════════════════════
+        function updateDashboard() {
+            let remain   = Math.max(0, totalCards-dealtCards);
+            let remDecks = Math.max(remain/52, 0.5);
+            let tc       = runningCount / remDecks;
+
+            document.getElementById('cards-left').innerText  = remain;
+            document.getElementById('round-count').innerText = rounds;
+            document.getElementById('rc-val').innerText = runningCount>0?'+'+runningCount:runningCount;
+            document.getElementById('tc-val').innerText = tc>0?'+'+tc.toFixed(2):tc.toFixed(2);
+            document.getElementById('rc-val').style.color = runningCount>0?'var(--banker-color)':(runningCount<0?'var(--player-color)':'white');
+            document.getElementById('tc-val').style.color = tc>0?'var(--banker-color)':(tc<0?'var(--player-color)':'white');
+
+            updateRoadState(history);
+
+            let aiStatus = document.getElementById('ai-status');
+            let aiBet    = document.getElementById('ai-bet');
+            let bankroll = parseFloat(document.getElementById('baseBankroll').value)||10000;
+            let absTc    = Math.abs(tc);
+            let lr       = lowerRoadScore(history);
+            let trend    = recentTrend(8);
+            let phase    = shoePhase();
+            let beBonus  = bankerEdgeBonus();
+            let tcWeight = phase==='early'?0.6:(phase==='mid'?0.85:1.0);
+            let adjAbsTc = absTc * tcWeight;
+
+            // 预计算TC推荐方向（供连败保护模式使用，确保胜后能自动解除）
+            let tcSideGlobal = tc >= 0 ? 'banker' : 'player';
+
+            // ──────────────────────────────────────────
+            // 🛡️ 连败保护（连败≥3局 → 最低仓5%）
+            //    关键修复：仍然记录 lastAISide = TC方向，胜利后自动解除
+            // ──────────────────────────────────────────
+            if (consecutiveLoss >= 3) {
+                let bet = roundTo100(bankroll * 0.05);
+                lastBetAmount = bet;
+                lastAISide    = tcSideGlobal;   // ← 修复：不设为null，确保胜后能重置连败
+                lastTcAbove25 = false;
+                let label = tcSideGlobal==='banker'?'【庄】':'【闲】';
+                aiStatus.innerText = '🛡️ 已连败'+consecutiveLoss+'局 · 保守观望'+label+' · 切勿上头';
+                aiStatus.style.color = '#ff5722';
+                aiBet.innerText = '建议下注: ￥'+bet+' (保护仓 5%)';
+                aiBet.style.color = '#ff5722';
+                return;
+            }
+
+            // ──────────────────────────────────────────
+            // ★ 优先级1：断龙过渡期
+            // ──────────────────────────────────────────
+            if (roadState.mode==='dragon_broken') {
+                lastTcAbove25 = false;
+                let bet = roundTo100(bankroll * 0.10);
+                lastBetAmount=bet; lastAISide=tcSideGlobal;
+                aiStatus.innerText = '⛔ 断龙！收缩观望 · 等待新形势';
+                aiStatus.style.color = '#ff9800';
+                aiBet.innerText = '建议下注: ￥'+bet+' (断龙收缩 10%)';
+                aiBet.style.color = '#ff9800';
+                return;
+            }
+
+            // ──────────────────────────────────────────
+            // ★ 优先级2：长龙/单跳追路（5颗+ 平注15%~20%）
+            // ──────────────────────────────────────────
+            if (roadState.mode==='follow_dragon'||roadState.mode==='follow_chop') {
+                if (effectiveBankroll===0) effectiveBankroll = bankroll;
+                lastTcAbove25 = true;
+
+                let followSide, typeLabel;
+                if (roadState.mode==='follow_dragon') {
+                    followSide = roadState.side==='b'?'banker':'player';
+                    typeLabel  = '长龙'+roadState.length+'颗';
+                } else {
+                    followSide = roadState.side==='b'?'player':'banker';
+                    typeLabel  = '单跳'+roadState.length+'颗';
+                }
+
+                let lrSide    = lr.score>0.2?'banker':(lr.score<-0.2?'player':null);
+                let lrConfirm = lrSide===followSide && lr.conf>0.4;
+                let tcConfirm = tcSideGlobal===followSide && adjAbsTc>=1.5;
+                let beConfirm = followSide==='banker' && beBonus>0.02;
+                let trendConf = trend.side===followSide && trend.strength>0.3;
+
+                let pct = 15;
+                if (lrConfirm)  pct+=2;
+                if (tcConfirm)  pct+=2;
+                if (beConfirm)  pct+=1;
+                if (trendConf)  pct+=1;
+                if (phase==='late'&&roadState.length>=7) pct=Math.min(20,pct+1);
+                pct = Math.min(20, pct);
+
+                // 注额取百位整数，本金精确
+                let bet = roundTo100(effectiveBankroll * pct / 100);
+                lastBetAmount=bet; lastAISide=followSide;
+
+                let label  = followSide==='banker'?'【庄】BANKER':'【闲】PLAYER';
+                let color  = followSide==='banker'?'var(--banker-color)':'var(--player-color)';
+                let sigs   = [lrConfirm&&'三路✅',tcConfirm&&'TC✅',beConfirm&&'牌靴✅',trendConf&&'趋势✅'].filter(Boolean);
+                let note   = sigs.length>=3?' · 全维共振🔥':(sigs.length>=2?' · '+sigs.join(''):' · 稳健跟路');
+
+                aiStatus.innerText = '🎯 '+typeLabel+' · 跟'+label+note;
+                aiStatus.style.color = color;
+                aiBet.innerText = '建议下注: ￥'+bet+' (平注'+pct+'% · 本金￥'+Math.round(effectiveBankroll)+')';
+                aiBet.style.color = '#ffeb3b';
+                return;
+            }
+
+            // ──────────────────────────────────────────
+            // ★ 档位一：adjTC < 2.0 → 保守 5%~10%
+            // ──────────────────────────────────────────
+            if (adjAbsTc < 2.0) {
+                lastTcAbove25=false;
+                let pct = Math.round(5+(adjAbsTc/2.0)*5);
+                if (phase==='early'&&naturalProbability()>0.30) pct=Math.max(pct,7);
+                let bet = roundTo100(bankroll*pct/100);
+                lastBetAmount=bet;
+
+                if (trend.side&&trend.strength>0.4) {
+                    lastAISide=trend.side;
+                    let label=trend.side==='banker'?'【庄】':'【闲】';
+                    let color=trend.side==='banker'?'var(--banker-color)':'var(--player-color)';
+                    aiStatus.innerText='⚖️ TC偏低 · 近期'+label+'趋势偏强';
+                    aiStatus.style.color=color;
+                } else {
+                    lastAISide=tcSideGlobal;
+                    let phLabel=phase==='early'?'新靴前期':(phase==='mid'?'牌靴中段':'靴末');
+                    aiStatus.innerText='⚖️ 牌面平衡 · 静观其变 ['+phLabel+']';
+                    aiStatus.style.color='var(--text-muted)';
+                }
+                aiBet.innerText='建议下注: ￥'+bet+' (保守仓 '+pct+'%)';
+                aiBet.style.color='var(--text-muted)';
+                return;
+            }
+
+            // ──────────────────────────────────────────
+            // ★ 档位二：adjTC 2.0~2.5 → 加仓 10%~20%
+            // ──────────────────────────────────────────
+            if (adjAbsTc < 2.5) {
+                lastTcAbove25=false;
+                let pct = Math.round(10+((adjAbsTc-2.0)/0.5)*10);
+                let lrSide = lr.score>0.15?'banker':(lr.score<-0.15?'player':null);
+                if (lrSide&&lrSide!==tcSideGlobal) pct=Math.max(10,pct-3);
+                if (tcSideGlobal==='banker'&&beBonus>0.03) pct=Math.min(20,pct+1);
+                let bet = roundTo100(bankroll*pct/100);
+                lastBetAmount=bet; lastAISide=tcSideGlobal;
+                let label = tcSideGlobal==='banker'?'【庄】BANKER':'【闲】PLAYER';
+                let color = tcSideGlobal==='banker'?'var(--banker-color)':'var(--player-color)';
+                let conf  = (lrSide===tcSideGlobal)?' · 路形确认✅':(lrSide?' · 路形存疑⚠️':'');
+                aiStatus.innerText='📊 信号明确 · 倾向'+label+conf;
+                aiStatus.style.color=color;
+                aiBet.innerText='建议下注: ￥'+bet+' (加仓 '+pct+'%)';
+                aiBet.style.color='#ffeb3b';
+                return;
+            }
+
+            // ──────────────────────────────────────────
+            // ★ 档位三：adjTC ≥ 2.5 → 稳健复利（上限30%）
+            //    本金精确记账，只有注额取百位整数
+            // ──────────────────────────────────────────
+            if (!lastTcAbove25||effectiveBankroll===0) effectiveBankroll=bankroll;
+            lastTcAbove25=true;
+
+            let lrSide      = lr.score>0.15?'banker':(lr.score<-0.15?'player':null);
+            let lrAgrees    = lrSide===tcSideGlobal && lr.conf>0.4;
+            let lrConflicts = lrSide && lrSide!==tcSideGlobal && lr.conf>0.5;
+            let trendAgrees = trend.side===tcSideGlobal && trend.strength>0.3;
+            let beAgrees    = tcSideGlobal==='banker'?beBonus>0.01:beBonus<-0.01;
+            let phaseBonus  = phase==='late';
+
+            let pct=20;
+            if (lrConflicts)  pct-=5;
+            if (lrAgrees)     pct+=3;
+            if (trendAgrees)  pct+=2;
+            if (beAgrees)     pct+=2;
+            if (phaseBonus)   pct+=2;
+            if (adjAbsTc>=4)  pct+=3;
+            pct=Math.min(30,Math.max(15,pct));
+
+            let bet = roundTo100(effectiveBankroll*pct/100);
+            lastBetAmount=bet; lastAISide=tcSideGlobal;
+
+            let label   = tcSideGlobal==='banker'?'【庄】BANKER':'【闲】PLAYER';
+            let color   = tcSideGlobal==='banker'?'var(--banker-color)':'var(--player-color)';
+            let sigCnt  = [lrAgrees,trendAgrees,beAgrees,phaseBonus].filter(Boolean).length;
+            let statusText;
+            if (lrConflicts)                   statusText='⚠️ 路形与TC分歧 · 轻仓'+label;
+            else if (sigCnt>=3&&adjAbsTc>=4)   statusText='🔥 五维共振 · 强势'+label;
+            else if (sigCnt>=2)                statusText='✅ 多维确认 · 稳跟'+label;
+            else                               statusText='📈 TC主导 · 稳健'+label+' ['+(phase==='late'?'靴末':'中段')+']';
+
+            let pnlNote = sessionPnL>0?' 📗+'+sessionPnL:(sessionPnL<0?' 📕'+sessionPnL:'');
+            aiStatus.innerText=statusText;
+            aiStatus.style.color=color;
+            aiBet.innerText='建议下注: ￥'+bet+' (复利'+pct+'% · 本金￥'+Math.round(effectiveBankroll)+pnlNote+')';
+            aiBet.style.color='#ffeb3b';
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  8. 渲染珠盘历史
+        // ══════════════════════════════════════════════════════════
+        function renderHistory() {
+            let track = document.getElementById('history-track');
+            track.innerHTML = '';
+            history.slice(-25).forEach(r => {
+                let dot = document.createElement('div');
+                dot.className='h-dot h-'+r;
+                dot.innerText=r==='p'?'闲':(r==='b'?'庄':'平');
+                track.appendChild(dot);
+            });
+            track.scrollLeft = track.scrollWidth;
+        }
+
+    </script>
+
+</body>
+</html>
