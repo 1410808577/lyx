@@ -291,18 +291,111 @@
         }
 
         // ══════════════════════════════════════════════════════════
-        //  路单分析
+        //  路单分析 — 大路为主，小路为辅
         // ══════════════════════════════════════════════════════════
-        function detectBigRoad(hist) {
+
+        // ★ 大路综合分析（主）：识别7种路形
+        function analyzeBigRoad(hist) {
             let nt = hist.filter(r=>r!=='t');
-            if (nt.length < 2) return { type:'none', length:0, side:null };
-            let streak=1, side=nt[nt.length-1];
-            for (let i=nt.length-2; i>=0; i--) { if(nt[i]===side) streak++; else break; }
-            if (streak >= 5) return { type:'dragon', length:streak, side };
-            let alt=1;
-            for (let i=nt.length-2; i>=0; i--) { if(nt[i]!==nt[i+1]) alt++; else break; }
-            if (alt >= 5) return { type:'chop', length:alt, side };
-            return { type:'none', length:0, side:null };
+            if (nt.length < 2) return { pattern:'none', side:null, strength:0, count:0, followSide:null, label:'' };
+            let last = nt[nt.length-1];
+
+            // ── 连续条纹长度 ──
+            let streak = 1;
+            for (let i=nt.length-2; i>=0 && nt[i]===last; i--) streak++;
+
+            // ── 单跳长度（交替）──
+            let chopLen = 1;
+            for (let i=nt.length-2; i>=0 && nt[i]!==nt[i+1]; i--) chopLen++;
+
+            // ── 双跳检测 (AABB AABB) ──
+            // 方法：用滑窗检测最近6-8局是否符合两两交替模式
+            let twoTwoStrength = 0;
+            if (nt.length >= 4) {
+                let r = nt.slice(-6);
+                let pairs = 0, pairMatch = 0;
+                for (let i=0; i+1<r.length; i+=2) {
+                    if (r[i]===r[i+1]) { pairs++; if(i>=2 && r[i]!==r[i-1]) pairMatch++; }
+                    else break;
+                }
+                if (pairs >= 2 && pairMatch >= 1) twoTwoStrength = 0.5 + pairs*0.1;
+                // 最后两局相同且前两局也成对 → 双跳进行中
+                if (nt.length >= 4 && nt[nt.length-1]===nt[nt.length-2] &&
+                    nt[nt.length-3]===nt[nt.length-4] &&
+                    nt[nt.length-1]!==nt[nt.length-3]) twoTwoStrength = Math.max(twoTwoStrength, 0.6);
+                if (nt.length >= 6 && twoTwoStrength > 0 &&
+                    nt[nt.length-5]===nt[nt.length-6] &&
+                    nt[nt.length-5]===nt[nt.length-3] &&
+                    nt[nt.length-5]!==nt[nt.length-1]) twoTwoStrength = Math.max(twoTwoStrength, 0.75);
+            }
+
+            // ── 近期偏向（5局中3局以上同侧）──
+            let biasSide = null, biasStrength = 0;
+            if (nt.length >= 5) {
+                let recent5 = nt.slice(-5);
+                let bCount = recent5.filter(r=>r==='b').length;
+                let pCount = 5 - bCount;
+                if (bCount >= 4) { biasSide='b'; biasStrength=bCount/5; }
+                else if (pCount >= 4) { biasSide='p'; biasStrength=pCount/5; }
+                else if (bCount === 3) { biasSide='b'; biasStrength=0.55; }
+                else if (pCount === 3) { biasSide='p'; biasStrength=0.55; }
+            }
+
+            // ── 优先级输出 ──
+            // 长龙（5连+）
+            if (streak >= 5) return { pattern:'long_dragon', side:last, strength:Math.min(0.95,0.75+streak*0.03), count:streak, followSide:last, label:'长龙'+streak+'连' };
+            // 长跳（5跳+）
+            if (chopLen >= 5) { let fs=last==='b'?'p':'b'; return { pattern:'long_chop', side:last, strength:Math.min(0.92,0.72+chopLen*0.03), count:chopLen, followSide:fs, label:'长跳'+chopLen+'位' }; }
+            // 双跳（AA BB 模式）
+            if (twoTwoStrength >= 0.6) {
+                // 双跳中：若最后两局同侧，下一组应换边；若最后一局与上一局不同，应跟上一局
+                let l1=nt[nt.length-1], l2=nt.length>=2?nt[nt.length-2]:null;
+                let fs = (l2&&l1===l2) ? (l1==='b'?'p':'b') : l1;
+                return { pattern:'two_two', side:last, strength:twoTwoStrength, count:4, followSide:fs, label:'双跳路' };
+            }
+            // 短龙（3-4连）
+            if (streak >= 3) return { pattern:'short_dragon', side:last, strength:0.45+streak*0.06, count:streak, followSide:last, label:'短龙'+streak+'连' };
+            // 短跳（3-4交替）
+            if (chopLen >= 3) { let fs=last==='b'?'p':'b'; return { pattern:'short_chop', side:last, strength:0.42+chopLen*0.06, count:chopLen, followSide:fs, label:'短跳'+chopLen+'位' }; }
+            // 近期偏向
+            if (biasStrength >= 0.6 && biasSide) return { pattern:'bias', side:biasSide, strength:biasStrength, count:5, followSide:biasSide, label:'近期偏'+( biasSide==='b'?'庄':'闲') };
+
+            return { pattern:'none', side:null, strength:0, count:0, followSide:null, label:'' };
+        }
+
+        // ★ 小路辅助信号（大眼路简化版）
+        // 大眼路规则：比较大路当前列与前一列是否相同
+        function smallRoadSignal(hist) {
+            let nt = hist.filter(r=>r!=='t');
+            if (nt.length < 6) return { agrees: false, side: null };
+
+            // 构建大路列结构（简化：每次换边算新列）
+            let cols = [];
+            let cur = [nt[0]];
+            for (let i=1; i<nt.length; i++) {
+                if (nt[i]===nt[i-1]) cur.push(nt[i]);
+                else { cols.push(cur); cur=[nt[i]]; }
+            }
+            cols.push(cur);
+
+            if (cols.length < 3) return { agrees: false, side: null };
+
+            // 大眼路：当前列长度 vs 前一列长度（长短是否一致）
+            let lastCol   = cols[cols.length-1];
+            let prevCol   = cols[cols.length-2];
+            let prev2Col  = cols.length >= 3 ? cols[cols.length-3] : null;
+
+            let curLen  = lastCol.length;
+            let prevLen = prevCol.length;
+            let curSide = lastCol[0];
+
+            // 若当前列和前一列长度相近（±1）→ 继续跟当前
+            let sameLength = Math.abs(curLen - prevLen) <= 1;
+            // 若前两列长度相近且当前在延续 → 强化信号
+            let patternContinues = prev2Col && Math.abs(prevLen - prev2Col.length) <= 1;
+
+            if (sameLength) return { agrees: true, side: curSide, strong: patternContinues };
+            return { agrees: false, side: null };
         }
 
         function lowerRoadScore(hist) {
@@ -327,22 +420,28 @@
             return { side:null, strength:0 };
         }
 
-        function updateRoadState(hist) {
-            let br   = detectBigRoad(hist);
-            let nt   = hist.filter(r=>r!=='t');
-            let last = nt.length > 0 ? nt[nt.length-1] : null;
-            if (roadState.mode==='follow_dragon') {
-                if (last && last!==roadState.side) { roadState.mode='dragon_broken'; roadState.brokenCount=1; }
-                else roadState.length=br.length;
-            } else if (roadState.mode==='follow_chop') {
-                if (nt.length>=2 && nt[nt.length-1]===nt[nt.length-2]) { roadState.mode='dragon_broken'; roadState.brokenCount=1; }
-                else { roadState.side=last; roadState.length=br.length; }
-            } else if (roadState.mode==='dragon_broken') {
+        // roadState保留用于断路追踪（brokenCount）
+        function updateRoadState(hist, bigRoad) {
+            let nt = hist.filter(r=>r!=='t');
+            // 如果大路识别到路形，更新roadState
+            if (bigRoad.pattern !== 'none' && bigRoad.pattern !== 'bias') {
+                if (roadState.mode === 'dragon_broken') {
+                    roadState.brokenCount++;
+                    if (roadState.brokenCount >= 3) {
+                        roadState = { mode:'normal', side:null, length:0, brokenCount:0 };
+                    }
+                } else if (roadState.side && bigRoad.side !== roadState.side &&
+                           (bigRoad.pattern==='long_dragon'||bigRoad.pattern==='short_dragon')) {
+                    // 条纹换边了 → 断路
+                    roadState = { mode:'dragon_broken', side:bigRoad.side, length:1, brokenCount:1 };
+                } else {
+                    roadState = { mode:'follow', side:bigRoad.side, length:bigRoad.count, brokenCount:0 };
+                }
+            } else if (roadState.mode === 'dragon_broken') {
                 roadState.brokenCount++;
-                if (roadState.brokenCount>=3) roadState={ mode:'normal', side:null, length:0, brokenCount:0 };
-            } else {
-                if (br.type==='dragon'&&br.length>=5) { roadState.mode='follow_dragon'; roadState.side=br.side; roadState.length=br.length; }
-                else if (br.type==='chop'&&br.length>=5) { roadState.mode='follow_chop'; roadState.side=br.side; roadState.length=br.length; }
+                if (roadState.brokenCount >= 3) roadState = { mode:'normal', side:null, length:0, brokenCount:0 };
+            } else if (bigRoad.pattern === 'none') {
+                roadState = { mode:'normal', side:null, length:0, brokenCount:0 };
             }
         }
 
@@ -540,109 +639,142 @@
         }
 
         // ══════════════════════════════════════════════════════════
-        //  ★ 新增：综合多维信心评分引擎
-        //  基于修正凯利准则 + 五维信号融合 + 心理纪律模块
+        //  ★ 综合信心评分（大路为主，TC/小路为辅）
         // ══════════════════════════════════════════════════════════
-        function computeSignal(adjAbsTc, tc, trend, lr, phase, beBonus) {
+        function computeSignal(adjAbsTc, tc, trend, lr, phase, beBonus, bigRoad, smallRoad) {
             let tcSide = tc >= 0 ? 'banker' : 'player';
             let signals = [];
             let confidence = 0;
+            let primarySide = null;
 
-            // ── 维度1：True Count 权重（最重要的数学基础）──
-            if      (adjAbsTc >= 4.0) { confidence += 0.35; signals.push('TC极强'+adjAbsTc.toFixed(1)); }
-            else if (adjAbsTc >= 3.0) { confidence += 0.27; signals.push('TC强'+adjAbsTc.toFixed(1)); }
-            else if (adjAbsTc >= 2.0) { confidence += 0.18; signals.push('TC中'+adjAbsTc.toFixed(1)); }
-            else if (adjAbsTc >= 1.5) { confidence += 0.09; signals.push('TC弱'+adjAbsTc.toFixed(1)); }
-            else                      { confidence += 0.03; }
-
-            // ── 维度2：三路下路综合评分 ──
-            if (lr.conf > 0.25) {
-                let lrStrength = Math.abs(lr.score) * lr.conf;
-                if      (lrStrength > 0.30) { confidence += 0.22; signals.push('三路强'); }
-                else if (lrStrength > 0.15) { confidence += 0.13; signals.push('三路中'); }
-                else if (lrStrength > 0.07) { confidence += 0.06; }
+            // ══ 主信号：大路路形（最重要，直接定方向）══
+            if (bigRoad.pattern !== 'none') {
+                primarySide = bigRoad.followSide === 'b' ? 'banker' : 'player';
+                // 路形强度直接贡献信心
+                if      (bigRoad.strength >= 0.80) { confidence += 0.42; signals.push(bigRoad.label+'🔥'); }
+                else if (bigRoad.strength >= 0.60) { confidence += 0.32; signals.push(bigRoad.label+'✅'); }
+                else if (bigRoad.strength >= 0.45) { confidence += 0.22; signals.push(bigRoad.label); }
+                else                               { confidence += 0.14; signals.push(bigRoad.label+'(弱)'); }
             }
 
-            // ── 维度3：近期趋势（心理动量）──
-            if      (trend.strength > 0.55) { confidence += 0.18; signals.push('趋势强'); }
-            else if (trend.strength > 0.35) { confidence += 0.11; signals.push('趋势中'); }
-            else if (trend.strength > 0.20) { confidence += 0.05; }
-
-            // ── 维度4：牌靴结构边际 ──
-            if (Math.abs(beBonus) > 0.05)  { confidence += 0.10; signals.push('牌靴利好'); }
-            else if (Math.abs(beBonus) > 0.025) { confidence += 0.05; }
-
-            // ── 维度5：靴期加成/惩罚 ──
-            if (phase === 'late'  && adjAbsTc >= 2.0) { confidence += 0.08; signals.push('靴末加成'); }
-            if (phase === 'early' && adjAbsTc <  1.5) { confidence -= 0.05; } // 早期TC不可靠
-
-            // ── 方向冲突检测（降信心）──
-            let lrSide    = lr.score >  0.15 ? 'banker' : (lr.score < -0.15 ? 'player' : null);
-            let trendSide = trend.side;
-            let votes = { banker:0, player:0 };
-            votes[tcSide]++;
-            if (lrSide)    votes[lrSide]++;
-            if (trendSide) votes[trendSide]++;
-
-            let finalSide = votes.banker >= votes.player ? 'banker' : 'player';
-            let conflict  = votes.banker === votes.player;
-
-            // TC与路单方向相反 → 降仓
-            if (lrSide && lrSide !== tcSide && lr.conf > 0.45) {
-                confidence *= 0.72;
-                signals.push('⚠️方向分歧');
-            } else if (conflict) {
-                confidence *= 0.82;
+            // ══ 辅助信号1：小路（大眼路）确认 ══
+            if (smallRoad.agrees && primarySide) {
+                let srSide = smallRoad.side === 'b' ? 'banker' : 'player';
+                if (srSide === primarySide) {
+                    confidence += smallRoad.strong ? 0.14 : 0.08;
+                    signals.push(smallRoad.strong ? '小路强确认✅' : '小路确认');
+                } else {
+                    confidence -= 0.06; // 小路不一致，轻微降信心
+                }
             }
+
+            // ══ 辅助信号2：True Count（牌型数学支撑）══
+            // TC辅助路形时加成，与路形相反时降信心
+            if (primarySide) {
+                let tcAligns = (tcSide === (primarySide==='banker'?'banker':'player'));
+                if      (adjAbsTc >= 4.0) { confidence += tcAligns ? 0.18 : -0.10; if(tcAligns) signals.push('TC极强✅'); else signals.push('⚠️TC反向'); }
+                else if (adjAbsTc >= 2.5) { confidence += tcAligns ? 0.12 : -0.06; if(tcAligns) signals.push('TC强✅'); }
+                else if (adjAbsTc >= 1.5) { confidence += tcAligns ? 0.06 : -0.03; }
+            } else {
+                // 无路形时TC为主信号
+                if      (adjAbsTc >= 4.0) { confidence += 0.32; primarySide=tcSide; signals.push('TC极强'+adjAbsTc.toFixed(1)); }
+                else if (adjAbsTc >= 3.0) { confidence += 0.24; primarySide=tcSide; signals.push('TC强'+adjAbsTc.toFixed(1)); }
+                else if (adjAbsTc >= 2.0) { confidence += 0.15; primarySide=tcSide; signals.push('TC中'+adjAbsTc.toFixed(1)); }
+                else if (adjAbsTc >= 1.5) { confidence += 0.07; primarySide=tcSide; }
+            }
+
+            // ══ 辅助信号3：近期趋势 ══
+            if (trend.side && primarySide) {
+                let trendAligns = trend.side === primarySide;
+                if      (trend.strength > 0.50) { confidence += trendAligns ? 0.12 : -0.05; if(trendAligns) signals.push('趋势强✅'); }
+                else if (trend.strength > 0.30) { confidence += trendAligns ? 0.07 : -0.03; if(trendAligns) signals.push('趋势中'); }
+                else if (trend.strength > 0.20) { confidence += trendAligns ? 0.03 : 0; }
+            } else if (trend.side && !primarySide) {
+                // 无路形且无TC时趋势为主
+                if (trend.strength > 0.40) { confidence += 0.16; primarySide=trend.side; signals.push('趋势主导'); }
+                else if (trend.strength > 0.25) { confidence += 0.09; primarySide=trend.side; }
+            }
+
+            // ══ 辅助信号4：三路下路评分 ══
+            if (lr.conf > 0.20 && primarySide) {
+                let lrSide = lr.score > 0.12 ? 'banker' : (lr.score < -0.12 ? 'player' : null);
+                if (lrSide === primarySide && Math.abs(lr.score) * lr.conf > 0.15) {
+                    confidence += 0.10; signals.push('三路确认✅');
+                } else if (lrSide && lrSide !== primarySide && lr.conf > 0.40) {
+                    confidence -= 0.07; signals.push('⚠️三路分歧');
+                }
+            }
+
+            // ══ 辅助信号5：牌靴结构 + 靴期 ══
+            if (Math.abs(beBonus) > 0.04) { confidence += 0.06; }
+            if (phase === 'late'  && adjAbsTc >= 2.0) { confidence += 0.07; signals.push('靴末加成'); }
+            if (phase === 'early' && adjAbsTc < 1.5)  { confidence -= 0.04; }
+
+            // 最终方向（三方投票）
+            if (!primarySide) primarySide = tcSide;
+            let finalSide = primarySide;
 
             return {
                 side: finalSide,
                 confidence: Math.min(0.95, Math.max(0, confidence)),
                 signals,
-                lrSide, trendSide, tcSide
+                bigRoad
             };
         }
 
         // ══════════════════════════════════════════════════════════
-        //  ★ 核心纪律模块：是否下注（非必要不下注）
+        //  ★ 核心纪律模块：大路为主决定是否下注
         // ══════════════════════════════════════════════════════════
-        function decideBet(conf, adjAbsTc, signalObj) {
-            // 数据不足
-            if (rounds < 3) return { go: false, why: '📊 数据采集中 ('+rounds+'/3局)' };
+        function decideBet(sig, adjAbsTc) {
+            let conf = sig.confidence;
+            let bigRoad = sig.bigRoad;
 
-            // ── 连败铁锁（连败≥3局进入保护，需连赢2局才能解锁）──
+            // 数据不足（前2局必观望）
+            if (rounds < 2) return { go: false, why: '📊 数据采集中 ('+rounds+'/2局)' };
+
+            // ── 连败铁锁 ──
             if (consecutiveLoss >= 3) {
-                return {
-                    go: false,
-                    why: '🛡️ 连败保护中 ('+consecutiveLoss+'负) · 解锁需再赢'+(2-protectionWins)+'局'
-                };
+                return { go: false, why: '🛡️ 连败保护中 ('+consecutiveLoss+'负) · 解锁需再赢'+(2-protectionWins)+'局' };
             }
 
-            // ── 5连龙强制追（条纹覆盖TC，绝对执行）──
-            if (currentStreak.count >= 5) {
-                return { go: true, why: '🐉 '+currentStreak.count+'连覆盖' };
-            }
-
-            // 断龙第1局 → 强制观望
+            // ── 断路观望（第1局冷静期）──
             if (roadState.mode === 'dragon_broken' && roadState.brokenCount <= 1) {
-                return { go: false, why: '⛔ 断龙第1局 · 等待形势' };
+                return { go: false, why: '⛔ 路形断裂 · 第1局冷静观察' };
             }
 
-            // 追路模式（长龙/单跳，已有足够样本）
-            if (roadState.mode === 'follow_dragon' || roadState.mode === 'follow_chop') {
-                if (conf >= 0.30) return { go: true, why: '🎯 追路' };
-                return { go: false, why: '👁️ 追路但信心不足' };
+            // ── 大路路形是主要触发条件 ──
+            if (bigRoad.pattern !== 'none') {
+                // 长龙/长跳（5+）：直接下注
+                if (bigRoad.pattern === 'long_dragon' || bigRoad.pattern === 'long_chop') {
+                    return { go: true, why: '🐉 '+bigRoad.label+' 强势跟路' };
+                }
+                // 双跳（AA BB）：信心>0.45下注
+                if (bigRoad.pattern === 'two_two' && conf >= 0.42) {
+                    return { go: true, why: '♟️ 双跳路形' };
+                }
+                // 短龙（3-4连）：信心>0.38或TC辅助
+                if (bigRoad.pattern === 'short_dragon') {
+                    if (conf >= 0.38) return { go: true, why: '🔷 短龙'+bigRoad.count+'连' };
+                    if (adjAbsTc >= 1.5) return { go: true, why: '🔷 短龙+TC辅助' };
+                    return { go: false, why: '👁️ 短龙信号偏弱 观望' };
+                }
+                // 短跳（3-4跳）：需要小路确认或TC辅助
+                if (bigRoad.pattern === 'short_chop') {
+                    if (conf >= 0.42) return { go: true, why: '🔶 短跳'+bigRoad.count+'位' };
+                    return { go: false, why: '👁️ 短跳等待确认' };
+                }
+                // 近期偏向：需要较高信心
+                if (bigRoad.pattern === 'bias' && conf >= 0.48) {
+                    return { go: true, why: '📊 近期偏向信号' };
+                }
             }
 
-            // ── 常规信号门控 ──
-            // 至少需要2个正向维度信号 且信心≥0.40才下注
-            let positiveSignals = signalObj.signals.filter(s => !s.includes('⚠️')).length;
-            if (conf >= 0.55 && positiveSignals >= 2) return { go: true, why: '✅ 多维确认' };
-            if (conf >= 0.45 && adjAbsTc >= 2.5)      return { go: true, why: '✅ TC主导强信号' };
-            if (conf >= 0.40 && positiveSignals >= 3)  return { go: true, why: '✅ 多维共振' };
+            // ── 无路形时，TC强信号兜底 ──
+            if (adjAbsTc >= 3.0 && conf >= 0.38) return { go: true, why: '📈 TC强信号主导' };
+            if (adjAbsTc >= 2.0 && conf >= 0.48) return { go: true, why: '📈 TC+多维确认' };
 
-            // 信号不够
-            return { go: false, why: '👁️ 信号不足('+Math.round(conf*100)+'%) · 本局观望' };
+            // 信号不足
+            return { go: false, why: '👁️ 路形不清('+Math.round(conf*100)+'%) · 观望等待' };
         }
 
         // ══════════════════════════════════════════════════════════
@@ -660,7 +792,8 @@
             document.getElementById('rc-val').style.color = runningCount>0?'var(--banker-color)':(runningCount<0?'var(--player-color)':'white');
             document.getElementById('tc-val').style.color = tc>0?'var(--banker-color)':(tc<0?'var(--player-color)':'white');
 
-            updateRoadState(history);
+            let bigRoadNow = analyzeBigRoad(history);
+            updateRoadState(history, bigRoadNow);
 
             // ── 资金面板更新 ──
             let bankroll = effectiveBankroll > 0 ? effectiveBankroll
@@ -695,6 +828,9 @@
             let betDec   = document.getElementById('bet-decision');
             let confBar  = document.getElementById('conf-bar');
 
+            // ── 大路分析（主）+ 小路辅助 ──
+            let bigRoad   = bigRoadNow;
+            let smallRoad = smallRoadSignal(history);
             let absTc    = Math.abs(tc);
             let lr       = lowerRoadScore(history);
             let trend    = recentTrend(8);
@@ -703,52 +839,23 @@
             let tcWeight = phase==='early'?0.6:(phase==='mid'?0.85:1.0);
             let adjAbsTc = absTc * tcWeight;
 
-            // ── 5连龙条纹覆盖 ──
-            if (currentStreak.count >= 5) {
-                let streakSide  = currentStreak.side === 'b' ? 'banker' : 'player';
-                let streakLabel = currentStreak.side === 'b' ? '【庄】龙' : '【闲】龙';
-                let streakColor = currentStreak.side === 'b' ? 'var(--banker-color)' : 'var(--player-color)';
-                let { go } = decideBet(0.92, adjAbsTc, { signals: [] });
-                lastBetDecision = go;
-                lastAISide      = streakSide;
-                // 追龙仓位：基准12%，每多1条加1%，上限20%
-                let pct         = Math.min(20, 12 + (currentStreak.count - 5) * 1);
-                let bet         = roundTo100(bankroll * pct / 100);
-                lastBetAmount   = bet;
-                lastTcAbove25   = true;
-
-                aiStatus.innerText = '🐉 '+currentStreak.count+'连'+streakLabel+' · 强势追龙（TC信号让位）';
-                aiStatus.style.color = streakColor;
-                aiBet.innerText = '建议下注: ￥'+bet+' (追龙'+pct+'% · 本金￥'+Math.round(bankroll)+')';
-                aiBet.style.color = '#ffeb3b';
-                banner.className = 'ai-banner hot-bet';
-                if (betDec) { betDec.innerText='🐉 追龙'; betDec.style.color='#f59e0b'; }
-                if (confBar) { confBar.style.width='92%'; confBar.style.background='#f59e0b'; }
-                return;
-            }
-
-            // ── 计算综合信号 ──
-            let sig = computeSignal(adjAbsTc, tc, trend, lr, phase, beBonus);
-            let { go, why } = decideBet(sig.confidence, adjAbsTc, sig);
+            // ── 综合信号计算（大路为主）──
+            let sig = computeSignal(adjAbsTc, tc, trend, lr, phase, beBonus, bigRoad, smallRoad);
+            let { go, why } = decideBet(sig, adjAbsTc);
             lastBetDecision = go;
 
-            // 更新信心条
+            // 信心条
             if (confBar) {
                 confBar.style.width = Math.round(sig.confidence * 100) + '%';
-                confBar.style.background = sig.confidence >= 0.65 ? '#f59e0b'
-                                         : sig.confidence >= 0.45 ? '#3b82f6' : '#334155';
+                confBar.style.background = sig.confidence >= 0.62 ? '#f59e0b'
+                                         : sig.confidence >= 0.40 ? '#3b82f6' : '#334155';
             }
 
             // ── 观望 ──
             if (!go) {
                 lastBetAmount = 0;
-                // 关键：保护期内必须保留 lastAISide（TC方向），才能追踪解锁进度
-                // 非保护期观望才清空 lastAISide
-                if (consecutiveLoss >= 3) {
-                    lastAISide = sig.side; // 保留TC方向用于解锁判断
-                } else {
-                    lastAISide = null;
-                }
+                if (consecutiveLoss >= 3) lastAISide = sig.side;
+                else lastAISide = null;
                 aiStatus.innerText = why;
                 aiStatus.style.color = consecutiveLoss >= 3 ? '#ff5722' : '#64748b';
                 aiBet.innerText = '本局不下注 · 本金 ￥'+Math.round(bankroll).toLocaleString();
@@ -758,125 +865,42 @@
                 return;
             }
 
-            // ── 计算注额（凯利变体仓位）──
+            // ── 下注：方向 + 仓位 ──
             lastAISide = sig.side;
             let recLabel = sig.side==='banker'?'【庄】BANKER':'【闲】PLAYER';
             let recColor = sig.side==='banker'?'var(--banker-color)':'var(--player-color)';
 
-            // 断龙过渡（第2-3局）→ 轻仓保守
-            if (roadState.mode === 'dragon_broken') {
-                let pct = 8;
-                let bet = roundTo100(bankroll * pct / 100);
-                lastBetAmount = bet; lastTcAbove25 = false;
-                aiStatus.innerText = '⛔ 断龙过渡 · 轻仓'+recLabel;
-                aiStatus.style.color = '#ff9800';
-                aiBet.innerText = '建议下注: ￥'+bet+' (断龙8% · 本金￥'+Math.round(bankroll)+')';
-                aiBet.style.color = '#ff9800';
-                banner.className = 'ai-banner no-bet';
-                if (betDec) { betDec.innerText='⚡轻仓'; betDec.style.color='#ff9800'; }
-                return;
-            }
-
-            // 追路模式（长龙/单跳）
-            if (roadState.mode==='follow_dragon' || roadState.mode==='follow_chop') {
-                let tcSide    = tc>=0 ? 'banker' : 'player';
-                let followSide = roadState.mode==='follow_dragon'
-                    ? (roadState.side==='b'?'banker':'player')
-                    : (roadState.side==='b'?'player':'banker');
-                lastAISide = followSide;
-                let followLabel = followSide==='banker'?'【庄】BANKER':'【闲】PLAYER';
-                let followColor = followSide==='banker'?'var(--banker-color)':'var(--player-color)';
-                let typeLabel   = roadState.mode==='follow_dragon'
-                    ? '长龙'+roadState.length+'颗' : '单跳'+roadState.length+'颗';
-
-                let lrSide    = lr.score>0.2?'banker':(lr.score<-0.2?'player':null);
-                let lrConfirm = lrSide===followSide && lr.conf>0.4;
-                let tcConfirm = tcSide===followSide && adjAbsTc>=1.5;
-                let trendConf = trend.side===followSide && trend.strength>0.3;
-
-                // 追路仓位收紧：基准10%，多维确认最高18%
-                let pct = 10;
-                if (lrConfirm) pct+=3;
-                if (tcConfirm) pct+=3;
-                if (trendConf) pct+=2;
-                if (phase==='late' && roadState.length>=7) pct=Math.min(18, pct+1);
-                pct = Math.min(18, pct);
-
-                let bet = roundTo100(bankroll * pct / 100);
-                lastBetAmount = bet; lastTcAbove25 = true;
-
-                let sigs = [lrConfirm&&'三路✅', tcConfirm&&'TC✅', trendConf&&'趋势✅'].filter(Boolean);
-                let note = sigs.length>=2?' · 共振'+sigs.join(''):' · 追路';
-                aiStatus.innerText = '🎯 '+typeLabel+' · 跟'+followLabel+note;
-                aiStatus.style.color = followColor;
-                aiBet.innerText = '建议下注: ￥'+bet+' (追路'+pct+'% · 本金￥'+Math.round(bankroll)+')';
-                aiBet.style.color = '#ffeb3b';
-                banner.className = 'ai-banner do-bet';
-                if (betDec) { betDec.innerText='🎯下注'; betDec.style.color='#3b82f6'; }
-                return;
-            }
-
-            // ══════════════════════════════════════════════════════════
-            //  ★ 精英仓位模型（全球最优凯利变体 + 心理纪律约束）
-            //
-            //  设计原理（基于全球顶级数学家/心理学家研究成果融合）：
-            //  ① 修正凯利准则（Ed Thorp）：全Kelly极其激进，实战用1/4 Kelly
-            //     fullKelly = (edge/odds)，实战仓位 = fullKelly × 0.25
-            //  ② 心理学：Kahneman损失厌恶理论—损失痛苦是等额盈利喜悦的2.5倍
-            //     → 低信心时宁可少赚，绝不冒大风险
-            //  ③ 风险控制（Nassim Taleb黑天鹅理论）：尾部风险不可预测
-            //     → 单注上限硬封25%，防止极端情况一局致命
-            //  ④ 信心校准（Bayesian推断）：信心50%≈微弱优势→轻仓
-            //     信心65%≈有效优势→中仓；信心80%+≈强势信号→高仓
-            //
-            //  仓位区间设计：
-            //    信心 40-54% → 8-12%（轻仓试探，信号不强不赌）
-            //    信心 55-64% → 12-17%（中仓，信号有效）
-            //    信心 65-74% → 17-22%（中高仓，多维确认）
-            //    信心 75-84% → 22-26%（高仓，强信号）
-            //    信心 85%+   → 26-28%（最高仓，极强共振）
-            //    上限硬封28%（永远保留>70%本金安全垫）
-            // ══════════════════════════════════════════════════════════
-            let pct;
+            // 修正凯利变体仓位（大路强度 × 信心双轨）
             let conf = sig.confidence;
+            let brs  = bigRoad.strength;
+            let pct;
+            if      (conf < 0.45) pct = 8;
+            else if (conf < 0.55) pct = Math.round(8  + (conf-0.45)/0.10*4);    // 8~12%
+            else if (conf < 0.65) pct = Math.round(12 + (conf-0.55)/0.10*5);    // 12~17%
+            else if (conf < 0.75) pct = Math.round(17 + (conf-0.65)/0.10*5);    // 17~22%
+            else                  pct = Math.round(22 + (conf-0.75)/0.20*4);    // 22~26%
+            pct = Math.max(8, Math.min(26, pct));
 
-            if      (conf < 0.55) pct = Math.round(8  + (conf - 0.40) / 0.15 * 4);   // 8~12%
-            else if (conf < 0.65) pct = Math.round(12 + (conf - 0.55) / 0.10 * 5);   // 12~17%
-            else if (conf < 0.75) pct = Math.round(17 + (conf - 0.65) / 0.10 * 5);   // 17~22%
-            else if (conf < 0.85) pct = Math.round(22 + (conf - 0.75) / 0.10 * 4);   // 22~26%
-            else                  pct = Math.round(26 + (conf - 0.85) / 0.10 * 2);   // 26~28%
-
-            pct = Math.max(8, Math.min(28, pct));
-
-            // ── 信号质量修正（微调，不大幅加仓）──
-            let positiveSignals = sig.signals.filter(s=>!s.includes('⚠️')).length;
-            // 多维共振且TC极强 → 小幅加仓（上限28%）
-            if (positiveSignals >= 3 && adjAbsTc >= 4.0 && conf >= 0.70) pct = Math.min(28, pct + 2);
-            // 方向分歧 → 无论信心多高都降仓
-            if (sig.signals.includes('⚠️方向分歧')) pct = Math.max(8, pct - 5);
-            // 靴末强信号加成（牌型信息最充分时）
-            if (phase === 'late' && adjAbsTc >= 4.0 && conf >= 0.75) pct = Math.min(28, pct + 1);
-            // 牌靴早期不确定性高 → 降仓保守
-            if (phase === 'early') pct = Math.max(8, pct - 2);
+            if (brs >= 0.80 && conf >= 0.52) pct = Math.min(26, pct+2);  // 强路形加仓
+            if (brs < 0.45)                   pct = Math.max(8,  pct-2);  // 弱路形降仓
+            if (sig.signals.some(s=>s.includes('⚠️'))) pct = Math.max(8, pct-3); // 分歧降仓
+            if (phase==='early') pct = Math.max(8, pct-2);                // 早期降仓
+            if (phase==='late' && conf>=0.68) pct = Math.min(26, pct+1);  // 靴末加仓
 
             let bet = roundTo100(bankroll * pct / 100);
             lastBetAmount = bet;
             lastTcAbove25 = adjAbsTc >= 2.5;
 
-            // 状态描述精细化
             let sigStr = sig.signals.filter(s=>!s.includes('⚠️')).slice(0,3).join(' · ');
-            let prefix;
-            if      (conf >= 0.80) prefix = '🔥 极强共振';
-            else if (conf >= 0.70) prefix = '✅ 强势确认';
-            else if (conf >= 0.60) prefix = '📊 多维确认';
-            else                   prefix = '⚖️ TC主导';
+            let prefix = conf>=0.78?'🔥 强势共振': conf>=0.62?'✅ 多维确认':
+                         bigRoad.pattern!=='none'?'🎯 路形跟随':'📊 TC主导';
 
             aiStatus.innerText = prefix+' · '+recLabel+(sigStr?' | '+sigStr:'');
             aiStatus.style.color = recColor;
             aiBet.innerText = '建议下注: ￥'+bet+' ('+pct+'%仓 信心'+Math.round(conf*100)+'% · 本金￥'+Math.round(bankroll)+')';
-            aiBet.style.color = conf >= 0.65 ? '#ffeb3b' : '#aaa';
-            banner.className = conf >= 0.70 ? 'ai-banner hot-bet' : 'ai-banner do-bet';
-            if (betDec) { betDec.innerText='⬆️下注'+pct+'%'; betDec.style.color = conf>=0.70?'#f59e0b':'#3b82f6'; }
+            aiBet.style.color = conf>=0.52 ? '#ffeb3b' : '#aaa';
+            banner.className = conf>=0.62 ? 'ai-banner hot-bet' : 'ai-banner do-bet';
+            if (betDec) { betDec.innerText='⬆️下注'+pct+'%'; betDec.style.color=conf>=0.62?'#f59e0b':'#3b82f6'; }
         }
 
         // ══════════════════════════════════════════════════════════
